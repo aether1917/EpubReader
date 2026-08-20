@@ -23,7 +23,15 @@ internal static class Program
             switch (args[0].ToLowerInvariant())
             {
                 case "--register":
-                    RegisterFileAssociation();
+                    AttachConsole(-1);
+                    try
+                    {
+                        Console.WriteLine(FileAssociation.SetAsDefault());
+                    }
+                    finally
+                    {
+                        FreeConsole();
+                    }
                     return 0;
 
                 case "--selftest" when args.Length > 1 && File.Exists(args[1]):
@@ -79,29 +87,6 @@ internal static class Program
         catch
         {
             // 非致命：只是影响渲染引擎版本
-        }
-    }
-
-    private static void RegisterFileAssociation()
-    {
-        try
-        {
-            var exePath = Environment.ProcessPath;
-            using (var root = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.epub"))
-                root?.SetValue("", "EpubReader.Document");
-
-            using (var prog = Registry.CurrentUser.CreateSubKey(@"Software\Classes\EpubReader.Document"))
-                prog?.SetValue("", "EPUB 电子书");
-
-            using (var shell = Registry.CurrentUser.CreateSubKey(
-                @"Software\Classes\EpubReader.Document\shell\open\command"))
-                shell?.SetValue("", $"\"{exePath}\" \"%1\"");
-
-            Console.WriteLine("已在当前用户下注册 .epub 文件关联，双击 EPUB 即可用 EpubReader 打开。");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("注册失败：" + ex.Message);
         }
     }
 
