@@ -68,14 +68,6 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 产物：`out\EpubReader.exe`（约 160 MB，绿色单文件，64 位 Windows 通用）。
 
-## 原理
-
-1. EPUB 本质是 ZIP：解析 `META-INF/container.xml` 找到 OPF 清单。
-2. 读取 OPF 的 `manifest` 与 `spine`，得到章节文件顺序。
-3. 解析 `toc.ncx`（EPUB 2）或 `nav.xhtml`（EPUB 3）生成目录。
-4. 解压整本书到临时目录，用内嵌浏览器按 `file://` 渲染，图片与样式自动生效。
-5. 文件关联：写入 `HKCU\Software\Classes\.epub`（每用户默认关联）+ 能力声明，Explorer 会优先按此打开 `.epub`，并在系统「默认应用」中列出 EpubReader。
-
 ## 许可证
 
 [GPL](LICENSE)
