@@ -15,6 +15,10 @@ public sealed class ReaderForm : Form
     private bool _syncingToc;
     private HtmlElement? _styleEl;
     private readonly System.Windows.Forms.Timer _resizeTimer;
+    private readonly ToolStrip _toolbar;
+    private bool _loaded;
+    private bool _applyingAutoFit;
+    private bool _autoFitEnabled = true;
 
     private readonly WebBrowser _browser = new()
     {
@@ -67,6 +71,7 @@ public sealed class ReaderForm : Form
             GripStyle = ToolStripGripStyle.Hidden,
             BackColor = Color.FromArgb(245, 245, 247)
         };
+        _toolbar = toolbar;
         toolbar.Items.Add(btnOpen);
         toolbar.Items.Add(btnDefault);
         toolbar.Items.Add(new ToolStripSeparator());
@@ -94,10 +99,16 @@ public sealed class ReaderForm : Form
             _resizeTimer.Stop();
             UpdateContentCss();
         };
-        Resize += (_, _) => _resizeTimer.Start();
+        Resize += (_, _) =>
+        {
+            // 用户手动调整窗口后，停止按内容自动适配高度
+            if (_loaded && !_applyingAutoFit) _autoFitEnabled = false;
+            _resizeTimer.Start();
+        };
 
         Load += (_, _) =>
         {
+            _loaded = true;
             BuildTocMenu();
             if (_spine.Count > 0) Go(0);
         };
@@ -290,10 +301,53 @@ public sealed class ReaderForm : Form
             var target = head ?? doc.Body?.Parent ?? doc.Body;
             target?.AppendChild(style);
             _styleEl = style;
+
+            AutoFitToContent();
         }
         catch
         {
             // 忽略渲染期异常
+        }
+    }
+
+    /// <summary>
+    /// 让窗口高度自动适配当前章节的内容高度：
+    /// 内容多高，窗口就多高（受限屏内），减少滚动；用户手动调整过窗口后自动停用。
+    /// </summary>
+    private void AutoFitToContent()
+    {
+        if (!_autoFitEnabled || _applyingAutoFit) return;
+        try
+        {
+            var body = _browser.Document?.Body;
+            if (body == null) return;
+            var contentH = body.ScrollRectangle.Height;
+            if (contentH <= 0) return;
+
+            var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1600, 900);
+            var toolbarH = _toolbar.Height;
+            var titleBar = Height - ClientSize.Height; // 标题栏 + 边框高度
+            var contentTop = _browser.Top;
+            var desiredH = contentH + toolbarH + titleBar + contentTop + 24; // 24px 底部留白
+            desiredH = Math.Clamp(desiredH, 480, area.Height);
+
+            if (Math.Abs(desiredH - Height) < 32) return; // 尺寸接近时不再抖动
+
+            _applyingAutoFit = true;
+            try
+            {
+                var y = Top;
+                if (y + desiredH > area.Bottom) y = Math.Max(area.Top, area.Bottom - desiredH);
+                SetBounds(Left, y, Width, (int)desiredH);
+            }
+            finally
+            {
+                _applyingAutoFit = false;
+            }
+        }
+        catch
+        {
+            // 自动适配失败时忽略，保持现状
         }
     }
 
