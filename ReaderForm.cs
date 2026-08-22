@@ -8,6 +8,21 @@ namespace EpubReader;
 
 public sealed class ReaderForm : Form
 {
+    // ——— E-Ink / Paper 设计体系 ———
+    // 纸面白、墨黑、铅笔灰，零动画、高对比，界面细节只留极简描边。
+    private static readonly Color Paper = Color.FromArgb(0xFD, 0xFB, 0xF7);   // 纸面
+    private static readonly Color Ink = Color.FromArgb(0x1A, 0x1A, 0x1A);     // 墨色
+    private static readonly Color Pencil = Color.FromArgb(0x4A, 0x4A, 0x4A);  // 铅笔灰（二级文字）
+    private static readonly Color Border = Color.FromArgb(0xE0, 0xE0, 0xE0);  // 细描边
+    private static readonly Color Hover = Color.FromArgb(0xF4, 0xF1, 0xE9);   // 悬停纸色
+    private static readonly Color Pressed = Color.FromArgb(0xEA, 0xE6, 0xDB); // 按下纸色
+    private static readonly Color DisabledText = Color.FromArgb(0x9C, 0x98, 0x90);
+
+    private const int HeaderHeight = 46;
+    private const int CtrlHeight = 32;
+    private static readonly Font UiFont = new("Segoe UI", 9.5f);
+    private static readonly Font ChevronFont = new("Segoe UI", 16f);
+
     private readonly EpubBook _book;
     private readonly List<string> _spine;
     private readonly List<TocEntry> _toc;
@@ -15,7 +30,7 @@ public sealed class ReaderForm : Form
     private bool _syncingToc;
     private HtmlElement? _styleEl;
     private readonly System.Windows.Forms.Timer _resizeTimer;
-    private readonly ToolStrip _toolbar;
+    private readonly Panel _header;
     private bool _loaded;
     private bool _applyingAutoFit;
 
@@ -25,10 +40,21 @@ public sealed class ReaderForm : Form
         ScriptErrorsSuppressed = true
     };
 
-    private readonly ToolStripButton _btnPrev;
-    private readonly ToolStripButton _btnNext;
-    private readonly ToolStripComboBox _tocBox;
-    private readonly ToolStripLabel _titleLabel;
+    private readonly PaperButton _btnPrev;
+    private readonly PaperButton _btnNext;
+    private readonly ComboBox _tocBox;
+    private readonly Label _titleLabel;
+    private readonly Label _posLabel;
+    private readonly PaperButton _btnOpen;
+    private readonly PaperButton _btnDefault;
+    private readonly ToolTip _tip = new()
+    {
+        InitialDelay = 350,
+        ReshowDelay = 100,
+        ShowAlways = true,
+        UseAnimation = false,
+        UseFading = false
+    };
 
     public ReaderForm(string epubPath)
     {
@@ -38,25 +64,65 @@ public sealed class ReaderForm : Form
 
         Text = "EpubReader — " + Path.GetFileName(epubPath);
         StartPosition = FormStartPosition.Manual;
+        BackColor = Paper;
+        ForeColor = Ink;
+        Font = UiFont;
         ApplySavedBounds();
         AllowDrop = true;
         KeyPreview = true;
+        _browser.BackColor = Paper;
 
-        _btnPrev = new ToolStripButton("◀ 上一章") { Enabled = false };
-        _btnNext = new ToolStripButton("下一章 ▶") { Enabled = false };
-        _tocBox = new ToolStripComboBox
+        _btnPrev = new PaperButton { Text = "‹", Width = 34, Padding = new Padding(0), Font = ChevronFont };
+        _btnPrev.AccessibleName = "上一章";
+        _btnPrev.AccessibleDescription = "跳转到上一章";
+        _btnPrev.Enabled = false;
+        _btnPrev.Click += (_, _) => Go(_index - 1);
+
+        _btnNext = new PaperButton { Text = "›", Width = 34, Padding = new Padding(0), Font = ChevronFont };
+        _btnNext.AccessibleName = "下一章";
+        _btnNext.AccessibleDescription = "跳转到下一章";
+        _btnNext.Enabled = false;
+        _btnNext.Click += (_, _) => Go(_index + 1);
+
+        _tocBox = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
-            AutoSize = false,
-            Width = 360
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Paper,
+            ForeColor = Ink,
+            Font = UiFont,
+            Width = 300,
+            DropDownHeight = 320,
+            IntegralHeight = false
         };
-        _titleLabel = new ToolStripLabel("") { Alignment = ToolStripItemAlignment.Right, AutoSize = true };
+        _tocBox.SelectedIndexChanged += OnTocSelected;
 
-        var btnOpen = new ToolStripButton("打开…");
-        btnOpen.Click += (_, _) => OpenAnother();
+        _titleLabel = new Label
+        {
+            Text = "",
+            AutoSize = false,
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleRight,
+            ForeColor = Pencil,
+            Font = UiFont,
+            UseMnemonic = false
+        };
 
-        var btnDefault = new ToolStripButton("设为默认打开方式");
-        btnDefault.Click += (_, _) =>
+        _posLabel = new Label
+        {
+            Text = "",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            ForeColor = Pencil,
+            Font = UiFont,
+            UseMnemonic = false
+        };
+
+        _btnOpen = new PaperButton { Text = "打开…", Width = 72 };
+        _btnOpen.Click += (_, _) => OpenAnother();
+
+        _btnDefault = new PaperButton { Text = "设为默认打开方式", Width = 152 };
+        _btnDefault.Click += (_, _) =>
         {
             var msg = FileAssociation.SetAsDefault();
             var goSettings = MessageBox.Show(this, msg + "\n\n是否打开系统「默认应用」设置页确认？",
@@ -65,26 +131,31 @@ public sealed class ReaderForm : Form
                 FileAssociation.OpenDefaultAppsSettings();
         };
 
-        var toolbar = new ToolStrip
+        _tip.SetToolTip(_btnPrev, "上一章（← / PageUp）");
+        _tip.SetToolTip(_btnNext, "下一章（→ / PageDown）");
+        _tip.SetToolTip(_tocBox, "目录：选择章节跳转");
+        _tip.SetToolTip(_btnOpen, "打开其他 EPUB 文件");
+        _tip.SetToolTip(_btnDefault, "将 EpubReader 设为 .epub 文件的默认打开方式");
+
+        _header = new Panel
         {
-            GripStyle = ToolStripGripStyle.Hidden,
-            BackColor = Color.FromArgb(245, 245, 247)
+            Dock = DockStyle.Top,
+            Height = HeaderHeight,
+            BackColor = Paper
         };
-        _toolbar = toolbar;
-        toolbar.Items.Add(btnOpen);
-        toolbar.Items.Add(btnDefault);
-        toolbar.Items.Add(new ToolStripSeparator());
-        toolbar.Items.Add(_btnPrev);
-        toolbar.Items.Add(_tocBox);
-        toolbar.Items.Add(_btnNext);
-        toolbar.Items.Add(_titleLabel);
+        _header.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Border);
+            e.Graphics.DrawLine(pen, 0, _header.Height - 1, _header.Width, _header.Height - 1);
+        };
+        _header.Resize += (_, _) => LayoutHeader();
+        _header.Controls.AddRange(new Control[]
+        {
+            _btnPrev, _btnNext, _tocBox, _titleLabel, _posLabel, _btnOpen, _btnDefault
+        });
 
         Controls.Add(_browser);
-        Controls.Add(toolbar);
-
-        _btnPrev.Click += (_, _) => Go(_index - 1);
-        _btnNext.Click += (_, _) => Go(_index + 1);
-        _tocBox.SelectedIndexChanged += OnTocSelected;
+        Controls.Add(_header);
 
         _browser.DocumentCompleted += OnDocumentCompleted;
         DragEnter += OnDragEnter;
@@ -104,6 +175,7 @@ public sealed class ReaderForm : Form
         Load += (_, _) =>
         {
             _loaded = true;
+            LayoutHeader();
             BuildTocMenu();
             if (_spine.Count > 0) Go(0);
         };
@@ -184,19 +256,55 @@ public sealed class ReaderForm : Form
         }
     }
 
-    /// <summary>根据当前窗口宽度生成自适应排版样式：字号随窗口自动缩放，版心自适应。</summary>
+    /// <summary>顶栏布局：左侧章节导航，右侧章节名与操作，全部采用纸面/墨色。</summary>
+    private void LayoutHeader()
+    {
+        var w = _header.ClientSize.Width;
+        var y = (HeaderHeight - CtrlHeight) / 2;
+
+        var right = w - 10;
+        PlaceRight(_btnDefault, ref right, y);
+        PlaceRight(_btnOpen, ref right, y);
+        PlaceRight(_posLabel, ref right, y + (CtrlHeight - _posLabel.Height) / 2);
+
+        const int gap = 4;
+        var left = 10;
+        _btnPrev.SetBounds(left, y, 34, CtrlHeight);
+        _btnNext.SetBounds(left + 34 + gap, y, 34, CtrlHeight);
+        _tocBox.SetBounds(left + 34 + gap + 34 + gap, y + 4, 300, _tocBox.Height);
+
+        var titleLeft = left + 34 + gap + 34 + gap + 300 + 20;
+        var titleRight = Math.Max(_posLabel.Left - 16, titleLeft);
+        _titleLabel.SetBounds(titleLeft, 0, titleRight - titleLeft, _header.ClientSize.Height);
+    }
+
+    private static void PlaceRight(Control c, ref int right, int y)
+    {
+        c.SetBounds(right - c.Width, y, c.Width, c.Height);
+        right -= c.Width + 8;
+    }
+
+    /// <summary>根据当前窗口宽度生成自适应排版样式：纸面配色、衬线正文、字号随窗口缩放。</summary>
     private string BuildReadingCss()
     {
         var size = Math.Clamp(12 + ClientSize.Width / 110, 14, 26);
         return $@"
             html,body{{margin:0;padding:0;}}
+            html{{background:#FDFBF7;}}
             body{{max-width:calc(100% - 48px);margin:0 auto!important;padding:28px 36px;line-height:1.9;
-                 font-family:Georgia,'Times New Roman','Songti SC','SimSun',serif;font-size:{size}px;color:#1a1a1a;background:#fff;}}
+                 font-family:Georgia,'Times New Roman','Songti SC','SimSun',serif;font-size:{size}px;color:#1A1A1A;background:#FDFBF7;}}
+            h1,h2,h3,h4{{margin:1.2em 0 .6em;line-height:1.35;color:#1A1A1A;}}
+            a{{color:#1A1A1A;text-decoration:underline;}}
+            a:hover{{color:#4A4A4A;}}
             img,svg{{max-width:100%;height:auto;}}
-            pre{{white-space:pre-wrap;word-wrap:break-word;}}
-            table{{max-width:100%;}}
-            a{{color:#1a6fb5;}}
-            h1,h2,h3,h4{{margin:1.2em 0 .6em;line-height:1.35;}}
+            pre{{white-space:pre-wrap;word-wrap:break-word;background:#F5F2EA;padding:12px 16px;}}
+            pre code{{background:transparent;padding:0;}}
+            code{{background:#F5F2EA;padding:1px 5px;}}
+            blockquote{{margin:1em 0;padding:.2em 0 .2em 16px;border-left:3px solid #D8D2C4;color:#4A4A4A;}}
+            hr{{border:none;border-top:1px solid #D8D2C4;margin:1.6em 0;}}
+            table{{max-width:100%;border-collapse:collapse;}}
+            th,td{{padding:6px 10px;border:1px solid #E0E0E0;}}
+            ::selection{{background:#EDE7D8;}}
         ";
     }
 
@@ -236,6 +344,8 @@ public sealed class ReaderForm : Form
         _index = index;
         _btnPrev.Enabled = index > 0;
         _btnNext.Enabled = index < _spine.Count - 1;
+        _posLabel.Text = $"{_index + 1} / {_spine.Count}";
+        LayoutHeader();
         _browser.Navigate(new Uri(_book.GetContentPath(_spine[index])));
         SyncTocSelection();
     }
@@ -245,6 +355,8 @@ public sealed class ReaderForm : Form
         var plain = href.Split('#')[0];
         var i = _spine.FindIndex(s => string.Equals(s, plain, StringComparison.OrdinalIgnoreCase));
         if (i >= 0) _index = i;
+        _posLabel.Text = $"{_index + 1} / {_spine.Count}";
+        LayoutHeader();
         _browser.Navigate(new Uri(_book.GetContentPath(href.Replace('/', Path.DirectorySeparatorChar))));
         SyncTocSelection();
     }
@@ -276,7 +388,8 @@ public sealed class ReaderForm : Form
             var current = _index >= 0 ? _spine[_index] : "";
             var tocTitle = _toc.FirstOrDefault(t =>
                 string.Equals(t.Href.Split('#')[0], current, StringComparison.OrdinalIgnoreCase))?.Title;
-            _titleLabel.Text = (tocTitle ?? Path.GetFileName(current)) + "    ";
+            _titleLabel.Text = tocTitle ?? Path.GetFileName(current);
+            LayoutHeader();
 
             var doc = _browser.Document;
             if (doc == null) return;
@@ -320,7 +433,7 @@ public sealed class ReaderForm : Form
             if (contentH <= 0) return;
 
             var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1600, 900);
-            var toolbarH = _toolbar.Height;
+            var toolbarH = _header.Height;
             var titleBar = Height - ClientSize.Height; // 标题栏 + 边框高度
             var contentTop = _browser.Top;
             var desiredH = contentH + toolbarH + titleBar + contentTop + 24; // 24px 底部留白
@@ -398,8 +511,48 @@ public sealed class ReaderForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _resizeTimer.Dispose();
+        _tip.Dispose();
         SaveBounds();
         _book.Dispose();
         base.OnFormClosed(e);
+    }
+
+    /// <summary>纸面风格扁平按钮：悬停/按下变色、键盘焦点虚线圈、禁用态灰字。</summary>
+    private sealed class PaperButton : Button
+    {
+        internal PaperButton()
+        {
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 1;
+            FlatAppearance.BorderColor = Border;
+            FlatAppearance.MouseOverBackColor = Hover;
+            FlatAppearance.MouseDownBackColor = Pressed;
+            BackColor = Paper;
+            ForeColor = Ink;
+            Cursor = Cursors.Hand;
+            Height = CtrlHeight;
+            UseVisualStyleBackColor = false;
+            Font = UiFont;
+            TextAlign = ContentAlignment.MiddleCenter;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (!Enabled)
+            {
+                using var bg = new SolidBrush(BackColor);
+                e.Graphics.FillRectangle(bg, ClientRectangle);
+                using var pen = new Pen(Border);
+                e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+                TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, DisabledText,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                return;
+            }
+
+            base.OnPaint(e);
+            if (Focused && ShowFocusCues)
+                ControlPaint.DrawFocusRectangle(e.Graphics,
+                    new Rectangle(3, 3, Width - 7, Height - 7), Ink, Color.Transparent);
+        }
     }
 }
