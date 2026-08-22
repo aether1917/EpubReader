@@ -18,7 +18,6 @@ public sealed class ReaderForm : Form
     private readonly ToolStrip _toolbar;
     private bool _loaded;
     private bool _applyingAutoFit;
-    private bool _autoFitEnabled = true;
 
     private readonly WebBrowser _browser = new()
     {
@@ -98,13 +97,9 @@ public sealed class ReaderForm : Form
         {
             _resizeTimer.Stop();
             UpdateContentCss();
+            AutoFitToContent();
         };
-        Resize += (_, _) =>
-        {
-            // 用户手动调整窗口后，停止按内容自动适配高度
-            if (_loaded && !_applyingAutoFit) _autoFitEnabled = false;
-            _resizeTimer.Start();
-        };
+        Resize += (_, _) => _resizeTimer.Start();
 
         Load += (_, _) =>
         {
@@ -316,7 +311,7 @@ public sealed class ReaderForm : Form
     /// </summary>
     private void AutoFitToContent()
     {
-        if (!_autoFitEnabled || _applyingAutoFit) return;
+        if (_applyingAutoFit) return;
         try
         {
             var body = _browser.Document?.Body;
