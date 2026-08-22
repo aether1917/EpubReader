@@ -52,14 +52,6 @@
 | 翻页 | 窗口高度自动跟随章节内容长度 |
 | `Esc` | 关闭窗口 |
 
-## 自检模式
-
-```powershell
-EpubReader.exe --selftest 书籍.epub
-```
-
-输出书籍元信息、章节数与目录，用于排查解析问题。
-
 ## 从源码构建
 
 需要 [.NET SDK 8](https://dotnet.microsoft.com/download)。
