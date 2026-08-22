@@ -18,6 +18,7 @@ A portable EPUB reading / preview tool. No installer needed — just double-clic
 
 ## Changelog
 
+- **v26.0.1**: Stable release. Consolidates all improvements since v26.0.0-beta — E-Ink/Paper interface, content fitting the window exactly and following late-loading images, toolbar blended into the page.
 - **v26.4.1beta**: Fixed content overflowing the window — exact document-height measurement with auto-converging refit (window stays in sync with async-loaded images); box-sizing on code blocks/quotes prevents horizontal overflow, long words wrap; removed the divider between toolbar and content so the UI blends into the page.
 - **v26.4.0beta**: Full UI redesign in E-Ink/Paper style — paper-white background, ink-black text, zero animation, high contrast; toolbar replaced by a self-drawn minimal header (chapter nav, TOC dropdown, chapter title, position indicator); reading typography upgraded (serif body, underlined links, paper-styled quotes/code/tables); hover feedback and keyboard focus rings on all buttons, tooltips everywhere, accessibility improvements.
 - **v26.3.1beta**: Content always auto-adapts to window size — height remains auto-fitted even after manual resize, window and content always stay in perfect sync.
