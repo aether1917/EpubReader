@@ -30,8 +30,10 @@ public sealed class ReaderForm : Form
     private bool _syncingToc;
     private HtmlElement? _styleEl;
     private readonly System.Windows.Forms.Timer _resizeTimer;
+    private readonly System.Windows.Forms.Timer _fitTimer = new() { Interval = 300 };
+    private int _lastMeasuredH = -1;
+    private int _fitPolls;
     private readonly Panel _header;
-    private bool _loaded;
     private bool _applyingAutoFit;
 
     private readonly WebBrowser _browser = new()
@@ -143,11 +145,6 @@ public sealed class ReaderForm : Form
             Height = HeaderHeight,
             BackColor = Paper
         };
-        _header.Paint += (_, e) =>
-        {
-            using var pen = new Pen(Border);
-            e.Graphics.DrawLine(pen, 0, _header.Height - 1, _header.Width, _header.Height - 1);
-        };
         _header.Resize += (_, _) => LayoutHeader();
         _header.Controls.AddRange(new Control[]
         {
@@ -172,9 +169,20 @@ public sealed class ReaderForm : Form
         };
         Resize += (_, _) => _resizeTimer.Start();
 
+        // 内容加载完成后收敛轮询：图片等异步资源就位、或滚动条消失引起回流时，
+        // 窗口高度持续贴合内容，直到测量值稳定（或达到轮询上限）。
+        _fitTimer.Tick += (_, _) =>
+        {
+            _fitTimer.Stop();
+            var h = MeasureContentHeight();
+            if (h <= 0 || h == _lastMeasuredH) return;
+            _lastMeasuredH = h;
+            AutoFitToContent();
+            if (++_fitPolls < 20) _fitTimer.Start();
+        };
+
         Load += (_, _) =>
         {
-            _loaded = true;
             LayoutHeader();
             BuildTocMenu();
             if (_spine.Count > 0) Go(0);
@@ -292,18 +300,19 @@ public sealed class ReaderForm : Form
             html,body{{margin:0;padding:0;}}
             html{{background:#FDFBF7;}}
             body{{max-width:calc(100% - 48px);margin:0 auto!important;padding:28px 36px;line-height:1.9;
-                 font-family:Georgia,'Times New Roman','Songti SC','SimSun',serif;font-size:{size}px;color:#1A1A1A;background:#FDFBF7;}}
+                 font-family:Georgia,'Times New Roman','Songti SC','SimSun',serif;font-size:{size}px;color:#1A1A1A;background:#FDFBF7;
+                 word-wrap:break-word;}}
             h1,h2,h3,h4{{margin:1.2em 0 .6em;line-height:1.35;color:#1A1A1A;}}
             a{{color:#1A1A1A;text-decoration:underline;}}
             a:hover{{color:#4A4A4A;}}
-            img,svg{{max-width:100%;height:auto;}}
-            pre{{white-space:pre-wrap;word-wrap:break-word;background:#F5F2EA;padding:12px 16px;}}
+            img,svg,video,iframe{{max-width:100%;height:auto;}}
+            pre{{box-sizing:border-box;white-space:pre-wrap;word-wrap:break-word;background:#F5F2EA;padding:12px 16px;}}
             pre code{{background:transparent;padding:0;}}
             code{{background:#F5F2EA;padding:1px 5px;}}
-            blockquote{{margin:1em 0;padding:.2em 0 .2em 16px;border-left:3px solid #D8D2C4;color:#4A4A4A;}}
+            blockquote{{box-sizing:border-box;margin:1em 0;padding:.2em 0 .2em 16px;border-left:3px solid #D8D2C4;color:#4A4A4A;}}
             hr{{border:none;border-top:1px solid #D8D2C4;margin:1.6em 0;}}
             table{{max-width:100%;border-collapse:collapse;}}
-            th,td{{padding:6px 10px;border:1px solid #E0E0E0;}}
+            th,td{{box-sizing:border-box;padding:6px 10px;border:1px solid #E0E0E0;}}
             ::selection{{background:#EDE7D8;}}
         ";
     }
@@ -393,7 +402,7 @@ public sealed class ReaderForm : Form
 
             var doc = _browser.Document;
             if (doc == null) return;
-            var style = doc.CreateElement("style");
+            var style = doc.CreateElement("style")!;
             style.SetAttribute("type", "text/css");
             style.InnerText = BuildReadingCss();
 
@@ -410,7 +419,10 @@ public sealed class ReaderForm : Form
             target?.AppendChild(style);
             _styleEl = style;
 
+            _lastMeasuredH = -1;
+            _fitPolls = 0;
             AutoFitToContent();
+            _fitTimer.Start();
         }
         catch
         {
@@ -419,27 +431,23 @@ public sealed class ReaderForm : Form
     }
 
     /// <summary>
-    /// 让窗口高度自动适配当前章节的内容高度：
-    /// 内容多高，窗口就多高（受限屏内），减少滚动；用户手动调整过窗口后自动停用。
+    /// 让窗口高度自动适配当前章节的内容高度，内容恰好完整显示：
+    /// 内容多高，窗口就多高（受限屏内），图片等异步资源加载后自动跟随；用户手动调整过窗口后自动停用。
     /// </summary>
     private void AutoFitToContent()
     {
         if (_applyingAutoFit) return;
         try
         {
-            var body = _browser.Document?.Body;
-            if (body == null) return;
-            var contentH = body.ScrollRectangle.Height;
+            var contentH = MeasureContentHeight();
             if (contentH <= 0) return;
 
             var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1600, 900);
-            var toolbarH = _header.Height;
             var titleBar = Height - ClientSize.Height; // 标题栏 + 边框高度
-            var contentTop = _browser.Top;
-            var desiredH = contentH + toolbarH + titleBar + contentTop + 24; // 24px 底部留白
+            var desiredH = contentH + titleBar + _browser.Top + 24; // 24px 底部留白
             desiredH = Math.Clamp(desiredH, 480, area.Height);
 
-            if (Math.Abs(desiredH - Height) < 32) return; // 尺寸接近时不再抖动
+            if (Math.Abs(desiredH - Height) < 8) return; // 尺寸接近时不再抖动
 
             _applyingAutoFit = true;
             try
@@ -459,6 +467,32 @@ public sealed class ReaderForm : Form
         }
     }
 
+    /// <summary>
+    /// 精确测量整页内容高度（含 body 内边距与图片等异步资源），
+    /// 取文档根元素 / body 滚动高度 / body 盒模型底边的最大值。
+    /// </summary>
+    private int MeasureContentHeight()
+    {
+        try
+        {
+            var doc = _browser.Document;
+            if (doc == null) return 0;
+            var result = doc.InvokeScript("eval", new object[]
+            {
+                "Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, " +
+                "Math.ceil(document.body.getBoundingClientRect().bottom + document.documentElement.scrollTop))"
+            });
+            if (result != null &&
+                int.TryParse(Convert.ToString(result, System.Globalization.CultureInfo.InvariantCulture), out var h))
+                return h;
+        }
+        catch
+        {
+            // 脚本不可用时回退到 DOM 测量
+        }
+        return _browser.Document?.Body?.ScrollRectangle.Height ?? 0;
+    }
+
     private void OpenAnother()
     {
         using var ofd = new OpenFileDialog
@@ -472,14 +506,14 @@ public sealed class ReaderForm : Form
 
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
-        e.Effect = e.Data.GetDataPresent(DataFormats.FileDrop)
+        e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true
             ? DragDropEffects.Copy
             : DragDropEffects.None;
     }
 
     private void OnDragDrop(object? sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] files) return;
         foreach (var f in files)
         {
             if (Path.GetExtension(f).Equals(".epub", StringComparison.OrdinalIgnoreCase))
@@ -511,6 +545,7 @@ public sealed class ReaderForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _resizeTimer.Dispose();
+        _fitTimer.Dispose();
         _tip.Dispose();
         SaveBounds();
         _book.Dispose();
