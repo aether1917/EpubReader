@@ -1,5 +1,7 @@
 # EpubReader
 
+[中文](README.md) | [English](README.en.md)
+
 一个便携式的 EPUB 阅读 / 预览工具，绿色免安装。没有主界面——双击 EPUB 文件、把 EPUB 拖到程序上、或右键「打开方式」选择 EpubReader，即可直接阅读书籍内容。
 
 - 单个 exe，无需安装 .NET 运行时（自包含）
