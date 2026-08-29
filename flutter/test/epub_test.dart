@@ -59,7 +59,7 @@ List<int> _buildTestEpub() {
   files.forEach((name, data) {
     archive.addFile(ArchiveFile(name, data.length, data));
   });
-  return ZipEncoder().encode(archive)!;
+  return ZipEncoder().encode(archive);
 }
 
 /// 1x1 红色 PNG。
@@ -103,7 +103,7 @@ void main() {
 
     final f = book.chapterFile('ch1.xhtml');
     expect(f, isNotNull);
-    expect(f.existsSync(), isTrue);
+    expect(f!.existsSync(), isTrue);
     final img = book.resolveFromChapter('ch1.xhtml', 'images/pic.png');
     expect(File(img).existsSync(), isTrue, reason: '图片路径应可解析：$img');
   });
