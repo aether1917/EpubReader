@@ -183,7 +183,7 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
 
     final cur = await windowManager.getSize();
     final pos = await windowManager.getPosition();
-    if ((desired - cur.height).abs() < 8) return;
+    if ((desired - cur.height).abs() < 3) return;
 
     _fitting = true;
     try {
