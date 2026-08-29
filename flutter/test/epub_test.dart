@@ -103,7 +103,7 @@ void main() {
 
     final f = book.chapterFile('ch1.xhtml');
     expect(f, isNotNull);
-    expect(f!.existsSync(), isTrue);
+    expect(f.existsSync(), isTrue);
     final img = book.resolveFromChapter('ch1.xhtml', 'images/pic.png');
     expect(File(img).existsSync(), isTrue, reason: '图片路径应可解析：$img');
   });
