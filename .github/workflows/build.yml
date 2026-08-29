@@ -1,0 +1,55 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.2
+          cache: true
+
+      - name: Show versions
+        run: flutter --version
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Build Windows (release)
+        run: flutter build windows --release
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}"
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "EpubReader.$v-windows-x64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EpubReader-windows-x64
+          path: EpubReader.*-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Create release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EpubReader.*-windows-x64.zip
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
