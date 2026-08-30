@@ -20,6 +20,7 @@ class ChapterRenderer {
     required this.fontSize,
     required this.contentWidth,
     required this.onNavigate,
+    this.devicePixelRatio = 1.0,
   });
 
   final EpubBook book;
@@ -32,6 +33,9 @@ class ChapterRenderer {
 
   /// 链接点击回调，传入原始 href（含可能的 #片段）。
   final void Function(String href) onNavigate;
+
+  /// 设备像素比，用于按显示尺寸解码图片（省内存、加快解码）。
+  final double devicePixelRatio;
 
   int imageCount = 0;
   final List<TapGestureRecognizer> _recognizers = [];
@@ -66,12 +70,17 @@ class ChapterRenderer {
 
   // ——— 入口 ———
 
+  /// 解析章节 XHTML（静态：可跨渲染缓存复用）。
+  static dom.Document? parseChapter(File file) {
+    final doc = html_parser.parse(_decodeBytes(file.readAsBytesSync()));
+    return doc.body == null ? null : doc;
+  }
+
   /// 解析章节文件并渲染为组件列表。
   List<Widget> renderFile(File file) {
-    final doc = html_parser.parse(_decodeBytes(file.readAsBytesSync()));
-    final body = doc.body;
-    if (body == null) return const [];
-    return renderNodes(body.nodes);
+    final doc = parseChapter(file);
+    if (doc == null) return const [];
+    return renderNodes(doc.body!.nodes);
   }
 
   List<Widget> renderNodes(List<dom.Node> nodes) => _blocks(nodes, indent: 0);
@@ -496,6 +505,8 @@ class ChapterRenderer {
       );
     }
     imageCount++;
+    final decodeW =
+        (contentWidth * _imageMaxRatio * devicePixelRatio).round();
     return Center(
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: fontSize * 0.4),
@@ -505,6 +516,7 @@ class ChapterRenderer {
             borderRadius: BorderRadius.circular(6),
             child: Image.file(
               f,
+              cacheWidth: decodeW > 0 ? decodeW : null,
               fit: BoxFit.scaleDown,
               filterQuality: FilterQuality.medium,
               errorBuilder: (_, _, _) => _assetPlaceholder(

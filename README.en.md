@@ -4,13 +4,14 @@
 
 A portable EPUB reading / preview tool. No installer needed — just double-click an EPUB file, drag it onto the program, or right-click "Open with" to start reading.
 
-> **Since v26.1.0-alpha the app has been rebuilt from C#/WinForms to Flutter + Material Design 3**: a full MD3 component system (dynamic color, menus, dialogs, progress indicator), light/dark themes following the system, with serif reading typography preserved. This is a preview release; the legacy C# implementation remains at the repository root.
+> **The app was rebuilt from C#/WinForms to Flutter + Material Design 3 starting with v26.1.0-alpha; v26.1.0 is the first stable release**: a full MD3 component system (dynamic color, menus, dialogs, progress indicator), light/dark themes following the system, with serif reading typography preserved. The legacy C# implementation remains at the repository root.
 
 - Single program bundle, no runtime installation required
 - Supports EPUB 2 / EPUB 3
 - Auto-parses table of contents (NCX / nav.xhtml), chapter navigation
 - Pure Flutter-native chapter rendering (headings/paragraphs/quotes/lists/tables/code blocks/images), no WebView involved
-- Material Design 3 interface, light/dark theme follows the system (v26.1.0-alpha)
+- Material Design 3 interface, light/dark theme follows the system (v26.1.0)
+- Performance: chapter render caching, images decoded at display size, next-chapter background prefetch, event-driven window resize (v26.1.0)
 - Serif reading typography; font size auto-scales with window width (v26.1.0-alpha)
 - Window height auto-fits chapter content and follows late-loading images (since v1.2.0, kept in v26.1.0-alpha)
 - Selectable/copyable text, tappable in-book and external links (v26.1.0-alpha)
@@ -19,6 +20,8 @@ A portable EPUB reading / preview tool. No installer needed — just double-clic
 
 ## Changelog
 
+- **v26.1.0**: Stable release. Consolidates all improvements from the v26.1.0-alpha series (MD3 interface, native rendering, cover fix) plus a round of performance work — chapter render caching (no re-parse/rebuild on resize, theme switch, or chapter revisit), images decoded at display size (much lower memory for large covers/long images), next-chapter background prefetch for instant page turns, event-driven window resize (removed the always-on polling timer), and scroll repaint isolation.
+- **v26.1.0-alpha.1**: Fixed covers not displaying — `<svg><image xlink:href="…"/></svg>` covers now render correctly (package:html namespaced-attribute issue); also fixed nav.xhtml `epub:type` detection.
 - **v26.1.0-alpha**: Flutter + Material Design 3 rebuild preview. Brand-new MD3 interface (dynamic color seed, light/dark themes, componentized menus/dialogs/progress bar); chapter content now renders natively in Flutter (no embedded browser) with text selection/copy and in-book anchor jumps; keeps existing features — window height auto-fit, width-adaptive font size, remembered window bounds, one-click file association.
 - **v26.0.1**: Stable release (C#/WinForms). Consolidates all improvements since v26.0.0-beta — E-Ink/Paper interface, content fitting the window exactly and following late-loading images, toolbar blended into the page.
 - **v26.0.1-beta3**: Fixed content overflowing the window — exact document-height measurement with auto-converging refit (window stays in sync with async-loaded images); box-sizing on code blocks/quotes prevents horizontal overflow, long words wrap; removed the divider between toolbar and content so the UI blends into the page.

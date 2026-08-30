@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
+
+import 'package:html/dom.dart' as dom;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
@@ -39,15 +42,22 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
   bool _userResized = false;
   bool _fitting = false;
   String _windowTitle = 'EpubReader';
-  ChapterRenderer? _renderer;
 
   final ScrollController _scroll = ScrollController();
   final GlobalKey _contentKey = GlobalKey();
   final MenuController _tocMenu = MenuController();
 
   Timer? _fitPollTimer;
-  Timer? _sizePollTimer;
   Timer? _fitDebounce;
+  Timer? _resizeEventDebounce;
+
+  // ——— 渲染缓存：组件树（按 章节|字号|主题）+ 解析 DOM（按文件路径）———
+  // 避免 resize/重建时反复读盘、解析、构树；页签切换时同章同字号直接复用。
+  final Map<String, List<Widget>> _renderCache = {};
+  final Map<String, ChapterRenderer> _renderOwners = {};
+  final Map<String, dom.Document> _docCache = {};
+  static const int _renderCacheMax = 3;
+  static const int _docCacheMax = 4;
   DateTime _lastProgrammaticFit = DateTime.fromMillisecondsSinceEpoch(0);
   Size _lastWindowSize = Size.zero;
   int _fitPolls = 0;
@@ -60,8 +70,6 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
     windowManager.addListener(this);
     _book = widget.book;
     _error = widget.startError;
-    _sizePollTimer =
-        Timer.periodic(const Duration(milliseconds: 400), (_) => _pollWindowSize());
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await windowManager.setPreventClose(true);
       await _restoreOrCenter();
@@ -75,11 +83,65 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
   void dispose() {
     windowManager.removeListener(this);
     _fitPollTimer?.cancel();
-    _sizePollTimer?.cancel();
     _fitDebounce?.cancel();
+    _resizeEventDebounce?.cancel();
+    _clearRenderCache();
     _scroll.dispose();
     _book?.dispose();
     super.dispose();
+  }
+
+  void _clearRenderCache() {
+    final owners = List.of(_renderOwners.values);
+    _renderCache.clear();
+    _renderOwners.clear();
+    _docCache.clear();
+    if (owners.isEmpty) return;
+    // 等当前帧的元素树 detached 后再释放手势识别器
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final r in owners) {
+        r.dispose();
+      }
+    });
+  }
+
+  void _cacheRender(String key, List<Widget> widgets, ChapterRenderer owner) {
+    _renderCache.remove(key);
+    _renderCache[key] = widgets;
+    _renderOwners.remove(key);
+    _renderOwners[key] = owner;
+    while (_renderCache.length > _renderCacheMax) {
+      final oldest = _renderCache.keys.first;
+      _renderCache.remove(oldest);
+      final o = _renderOwners.remove(oldest);
+      if (o != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => o.dispose());
+      }
+    }
+  }
+
+  void _cacheDoc(String path, dom.Document doc) {
+    _docCache.remove(path);
+    _docCache[path] = doc;
+    while (_docCache.length > _docCacheMax) {
+      _docCache.remove(_docCache.keys.first);
+    }
+  }
+
+  /// 后台 isolate 预解析下一章，翻页时省去读盘+解析等待。
+  void _prefetchNextDom() {
+    if (_book == null) return;
+    final next = _index + 1;
+    final spine = _safeBook.spine;
+    if (next < 0 || next >= spine.length) return;
+    final f = _safeBook.chapterFile(spine[next]);
+    if (f == null || !f.existsSync() || _docCache.containsKey(f.path)) return;
+    final path = f.path;
+    Isolate.run(() => ChapterRenderer.parseChapter(File(path))).then((doc) {
+      if (doc != null && mounted && !_docCache.containsKey(path)) {
+        _cacheDoc(path, doc);
+      }
+    }).catchError((_) {});
   }
 
   // ——— 窗口生命周期 ———
@@ -114,9 +176,17 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
     await windowManager.focus();
   }
 
-  // ——— 尺寸轮询：区分程序化调整与用户手动调整 ———
+  // ——— 窗口尺寸事件驱动（onWindowResize + 去抖），区分程序化与手动调整 ———
 
-  Future<void> _pollWindowSize() async {
+  @override
+  void onWindowResize() {
+    // 拖拽缩放期间事件密集，合并为停顿后的单次处理
+    _resizeEventDebounce?.cancel();
+    _resizeEventDebounce =
+        Timer(const Duration(milliseconds: 150), _handleWindowSizeChanged);
+  }
+
+  Future<void> _handleWindowSizeChanged() async {
     if (!mounted) return;
     final size = await windowManager.getSize();
     if (size == Size.zero) return;
@@ -217,6 +287,7 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
     } else {
       _startFitPolls();
     }
+    _prefetchNextDom();
   }
 
   String _fileName() {
@@ -315,6 +386,7 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
     try {
       final book = EpubBook.open(path);
       final old = _book;
+      _clearRenderCache();
       setState(() {
         _book = book;
         _error = null;
@@ -555,46 +627,59 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
 
   Widget _buildContent(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final brightness = Theme.of(context).brightness;
     final spine = _safeBook.spine;
     List<Widget> children = const [];
 
-    final previous = _renderer;
-    final renderer = ChapterRenderer(
-      book: _safeBook,
-      spineHref: spine.isNotEmpty ? spine[math.max(_index, 0)] : '',
-      colorScheme: scheme,
-      fontSize: _fontSize,
-      contentWidth: math.min(_contentMaxWidth - 72, 760),
-      onNavigate: _onLink,
-    );
-    _renderer = renderer;
-    if (previous != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
-    }
+    // 缓存键：章节 + 字号 + 明暗主题；命中时零解析零构树
+    final cacheKey = _index >= 0 && _index < spine.length
+        ? '$_index|$_fontSize|${brightness.name}'
+        : '';
 
-    if (_index >= 0 && _index < spine.length) {
-      final f = _safeBook.chapterFile(spine[_index]);
-      if (f != null && f.existsSync()) {
+    if (cacheKey.isNotEmpty && _renderCache.containsKey(cacheKey)) {
+      children = _renderCache.remove(cacheKey)!;
+      _renderCache[cacheKey] = children; // LRU 触碰
+    } else if (cacheKey.isNotEmpty) {
+      final spineHref = spine[_index];
+      final owner = ChapterRenderer(
+        book: _safeBook,
+        spineHref: spineHref,
+        colorScheme: scheme,
+        fontSize: _fontSize,
+        contentWidth: math.min(_contentMaxWidth - 72, 760),
+        onNavigate: _onLink,
+        devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+      );
+
+      final f = _safeBook.chapterFile(spineHref);
+      if (f == null || !f.existsSync()) {
+        children = [
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text('章节文件缺失：$spineHref',
+                style: TextStyle(color: scheme.error)),
+          ),
+        ];
+      } else {
         try {
-          children = renderer.renderFile(f);
+          final doc = _docCache.remove(f.path) ?? ChapterRenderer.parseChapter(f);
+          if (doc == null) {
+            children = const [];
+          } else {
+            _cacheDoc(f.path, doc);
+            children = owner.renderNodes(doc.body!.nodes);
+          }
         } catch (e) {
           children = [
             Padding(
               padding: const EdgeInsets.all(24),
-              child:
-                  Text('本章内容渲染失败：$e', style: TextStyle(color: scheme.error)),
+              child: Text('本章内容渲染失败：$e',
+                  style: TextStyle(color: scheme.error)),
             ),
           ];
         }
-      } else {
-        children = [
-          Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text('章节文件缺失：${spine[_index]}',
-                style: TextStyle(color: scheme.error)),
-          ),
-        ];
       }
+      _cacheRender(cacheKey, children, owner);
     }
 
     final hPad = math.max(
@@ -602,15 +687,17 @@ class _ReaderWindowState extends State<ReaderWindow> with WindowListener {
       (_lastWindowSize.width - _contentMaxWidth) / 2,
     );
 
-    return SelectionArea(
-      child: SingleChildScrollView(
-        controller: _scroll,
-        padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 28),
-        child: Column(
-          key: _contentKey,
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: children,
+    return RepaintBoundary(
+      child: SelectionArea(
+        child: SingleChildScrollView(
+          controller: _scroll,
+          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 28),
+          child: Column(
+            key: _contentKey,
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
+          ),
         ),
       ),
     );
