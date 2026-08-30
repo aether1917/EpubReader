@@ -172,7 +172,8 @@ class EpubBook {
         final navs = doc.querySelectorAll('nav');
         dom.Element? chosen;
         for (final nav in navs) {
-          final type = nav.attributes['epub:type'] ?? nav.attributes['type'];
+          final type =
+              qualifiedAttr(nav, 'epub:type') ?? nav.attributes['type'];
           if (type != null && type.split(RegExp(r'\s+')).contains('toc')) {
             chosen = nav;
             break;
@@ -336,6 +337,15 @@ class EpubBook {
   }
 
   // ——— 工具 ———
+
+  /// package:html 中带命名空间的属性（如 xlink:href、epub:type）的键不是
+  /// 普通字符串，直接 attributes['xlink:href'] 查不到；按 toString 匹配。
+  static String? qualifiedAttr(dom.Element e, String name) {
+    for (final k in e.attributes.keys) {
+      if (k.toString() == name) return e.attributes[k];
+    }
+    return null;
+  }
 
   static Iterable<xml.XmlElement> allElements(
     xml.XmlNode node, {

@@ -55,7 +55,9 @@ Write-Host "== 4/4 拷回产物到 out\ =="
 $releaseDir = Join-Path $stage 'build\windows\x64\runner\Release'
 if (-not (Test-Path $releaseDir)) { Write-Error "未找到构建产物：$releaseDir"; exit 1 }
 
-$bundleName = "EpubReader.v26.1.0-alpha-windows-x64"
+$pubspec = Get-Content (Join-Path $stage 'pubspec.yaml') -Raw
+if ($pubspec -match '(?m)^version:\s*(.+?)\s*$') { $ver = $Matches[1] } else { $ver = 'unknown' }
+$bundleName = "EpubReader.v$ver-windows-x64"
 $dest = Join-Path $outDir $bundleName
 if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
 New-Item -ItemType Directory -Path $dest -Force | Out-Null

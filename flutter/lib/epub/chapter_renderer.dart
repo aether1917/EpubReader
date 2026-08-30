@@ -196,7 +196,7 @@ class ChapterRenderer {
         case 'table':
           add(node, _pad(child: _table(node), top: fontSize * 0.4, bottom: fontSize * 0.6));
         case 'svg':
-          add(node, _pad(child: _svgPlaceholder(node), bottom: fontSize * 0.5));
+          add(node, _pad(child: _svgWidget(node), bottom: fontSize * 0.5));
         case 'dl':
         case 'figure':
         case 'details':
@@ -430,7 +430,22 @@ class ChapterRenderer {
     return Text.rich(TextSpan(children: spans), style: style);
   }
 
-  Widget _svgPlaceholder(dom.Element e) {
+  /// SVG：EPUB 封面常见 `<svg><image xlink:href="cover.jpg"/></svg>` 结构，
+  /// 引用了位图时直接渲染该图片，仅纯矢量内容才显示占位框。
+  Widget _svgWidget(dom.Element e) {
+    final img =
+        e.localName == 'image' ? e : e.querySelector('image');
+    if (img != null) {
+      final href =
+          EpubBook.qualifiedAttr(img, 'xlink:href') ??
+              EpubBook.qualifiedAttr(img, 'href') ??
+              '';
+      final alt = img.attributes['alt'] ?? e.querySelector('title')?.text ?? '';
+      if (href.isNotEmpty && !href.startsWith('#') && !href.startsWith('data:')) {
+        final w = _imageFromFile(href, alt);
+        if (w != null) return w;
+      }
+    }
     final alt = e.attributes['alt'] ?? e.querySelector('title')?.text ?? 'SVG 图形';
     return _assetPlaceholder(icon: Icons.image_outlined, label: alt);
   }
@@ -462,7 +477,10 @@ class ChapterRenderer {
     final src = e.attributes['src'] ?? e.attributes['data-src'];
     final alt = e.attributes['alt'] ?? '';
     if (src == null || src.isEmpty || src.startsWith('data:')) return null;
+    return _imageFromFile(src, alt);
+  }
 
+  Widget? _imageFromFile(String src, String alt) {
     if (src.toLowerCase().endsWith('.svg')) {
       return _assetPlaceholder(
         icon: Icons.image_outlined,
@@ -567,7 +585,7 @@ class ChapterRenderer {
         return [WidgetSpan(alignment: PlaceholderAlignment.middle, child: w)];
       case 'svg':
         return [
-          WidgetSpan(alignment: PlaceholderAlignment.middle, child: _svgPlaceholder(e)),
+          WidgetSpan(alignment: PlaceholderAlignment.middle, child: _svgWidget(e)),
         ];
       default:
         return _inline(e.nodes, base);

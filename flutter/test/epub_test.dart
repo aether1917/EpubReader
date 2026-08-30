@@ -23,20 +23,32 @@ List<int> _buildTestEpub() {
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
     <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
     <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
     <item id="img" href="images/pic.png" media-type="image/png"/>
+    <item id="cimg" href="images/cover.jpg" media-type="image/jpeg"/>
   </manifest>
-  <spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/></spine>
+  <spine toc="ncx"><itemref idref="cover"/><itemref idref="c1"/><itemref idref="c2"/></spine>
 </package>'''),
     'OEBPS/toc.ncx': utf8.encode('''<?xml version="1.0"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head/><docTitle><text>测试之书</text></docTitle>
   <navMap>
+    <navPoint id="n0" playOrder="0"><navLabel><text>封面</text></navLabel><content src="cover.xhtml"/></navPoint>
     <navPoint id="n1" playOrder="1"><navLabel><text>第一章</text></navLabel><content src="ch1.xhtml"/></navPoint>
     <navPoint id="n2" playOrder="2"><navLabel><text>第二章</text></navLabel><content src="ch2.xhtml#sec"/></navPoint>
   </navMap>
 </ncx>'''),
+    'OEBPS/cover.xhtml': utf8.encode('''<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>cover</title></head><body>
+<div style="text-align:center">
+<svg xmlns="http://www.w3.org/2000/svg" height="100%" preserveAspectRatio="xMidYMid meet" version="1.1" viewBox="0 0 600 800" width="100%">
+<image xlink:href="images/cover.jpg" width="600" height="800"/>
+</svg>
+</div>
+</body></html>'''),
+    'OEBPS/images/cover.jpg': _fakeJpeg(),
     'OEBPS/ch1.xhtml': utf8.encode('''<?xml version="1.0"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>c1</title></head><body>
 <h1 id="top">第一章</h1>
@@ -61,6 +73,10 @@ List<int> _buildTestEpub() {
   });
   return ZipEncoder().encode(archive);
 }
+
+/// 最小 JPEG（仅字节结构，测试不解码）。
+Uint8List _fakeJpeg() =>
+    Uint8List.fromList(const [0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x01, 0xFF, 0xD9]);
 
 /// 1x1 红色 PNG。
 Uint8List _fakePng() => Uint8List.fromList(const [
@@ -91,12 +107,14 @@ void main() {
     addTearDown(book.dispose);
 
     expect(book.title, '测试之书');
-    expect(book.spine, ['ch1.xhtml', 'ch2.xhtml']);
-    expect(book.toc.length, 2);
-    expect(book.toc[0].title, '第一章');
-    expect(book.toc[0].href, 'ch1.xhtml');
-    expect(book.toc[1].href, 'ch2.xhtml#sec');
-    expect(book.toc[1].level, 0);
+    expect(book.spine, ['cover.xhtml', 'ch1.xhtml', 'ch2.xhtml']);
+    expect(book.toc.length, 3);
+    expect(book.toc[0].title, '封面');
+    expect(book.toc[0].href, 'cover.xhtml');
+    expect(book.toc[1].title, '第一章');
+    expect(book.toc[1].href, 'ch1.xhtml');
+    expect(book.toc[2].href, 'ch2.xhtml#sec');
+    expect(book.toc[2].level, 0);
 
     expect(book.spineIndexOf(book.toc[1]), 1);
     expect(book.tocEntryFor('ch1.xhtml')?.title, '第一章');
@@ -125,6 +143,25 @@ void main() {
     final widgets = renderer.renderFile(book.chapterFile('ch1.xhtml')!);
     expect(widgets, isNotEmpty);
     expect(renderer.imageCount, 1, reason: '应解析出 1 张图片');
+  });
+
+  test('SVG 封面（svg > image xlink:href）应渲染真实图片而非占位框', () {
+    final book = EpubBook.open(epubFile.path);
+    addTearDown(book.dispose);
+
+    final renderer = ChapterRenderer(
+      book: book,
+      spineHref: 'cover.xhtml',
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF8B6A4F)),
+      fontSize: 17,
+      contentWidth: 700,
+      onNavigate: (_) {},
+    );
+    addTearDown(renderer.dispose);
+
+    final widgets = renderer.renderFile(book.chapterFile('cover.xhtml')!);
+    expect(widgets, isNotEmpty);
+    expect(renderer.imageCount, 1, reason: 'svg 内 image 引用的封面图应计入真实图片');
   });
 
   test('normalizeHref 保留片段并解码', () {
